@@ -11,6 +11,7 @@ import { pipeline } from 'stream';
 import { promisify } from 'util';
 const pump = promisify(pipeline);
 import { Customer } from './definitions';
+import { slugify } from './utils';
 
 export async function authenticate(
     prevState: string | undefined,
@@ -121,19 +122,19 @@ export async function createCustomer(formData: FormData) {
         image: formData.get('image'),
     });
 
-    const hasImage = image.size > 0;
+    const hasImage = typeof image === 'object' && image.size > 0;
     var imageUrl = '/customers/default.png';
 
-    if (hasImage) {
-        const extension = image.name.split('.').pop();
-        const filename = name + '.' + extension;
-        const filePath = `public/customers/${filename}`;
-        imageUrl = `/customers/${filename}`;
-
-        await pump(image.stream(), fs.createWriteStream(filePath));
-    }
-
     try {
+        if (hasImage) {
+            const extension = image.name.split('.').pop();
+            const filename = slugify(name) + '.' + extension;
+            const filePath = `public/customers/${filename}`;
+            imageUrl = `/customers/${filename}`;
+
+            await pump(image.stream(), fs.createWriteStream(filePath));
+        }
+
         await sql`
             INSERT INTO customers (name, email, image_url)
             VALUES (${name}, ${email}, ${imageUrl})
@@ -160,12 +161,12 @@ export async function updateCustomer(id: string, formData: FormData) {
     });
 
     try {
-        const hasImage = image.size > 0;
+        const hasImage = typeof image === 'object' && image.size > 0;
 
         if (hasImage) {
             // Upload new image
             const extension = image.name.split('.').pop();
-            const newFilename = name + '.' + extension;
+            const newFilename = slugify(name) + '.' + extension;
             const newFilePath = `public/customers/${newFilename}`;
             const newImageUrl = `/customers/${newFilename}`;
 
@@ -217,9 +218,10 @@ export async function deleteCustomer(id: string) {
         const imageUrl = data.rows[0].image_url;
 
         if (imageUrl !== '/customers/default.png') {
-            const filename = imageUrl.split('/').pop();
-            const filePath = `public/customers/${filename}`;
-            fs.unlinkSync(filePath);
+            const filePath = `public${imageUrl}`;
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+            }
         }
 
         await sql`DELETE FROM customers WHERE id = ${id}`;
