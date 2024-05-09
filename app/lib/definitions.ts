@@ -80,6 +80,12 @@ export type CustomerField = {
   name: string;
 };
 
+export type CustomerForm = {
+  id: string;
+  name: string;
+  email: number;
+};
+
 export type InvoiceForm = {
   id: string;
   customer_id: string;

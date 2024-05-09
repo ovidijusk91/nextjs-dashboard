@@ -6,6 +6,11 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { signIn } from '@/auth';
 import { AuthError } from 'next-auth';
+import fs from 'fs';
+import { pipeline } from 'stream';
+import { promisify } from 'util';
+const pump = promisify(pipeline);
+import { Customer } from './definitions';
 
 export async function authenticate(
     prevState: string | undefined,
@@ -96,6 +101,133 @@ export async function deleteInvoice(id: string) {
     } catch(error) {
         return {
             message: 'Database Error: Failed to Delete Invoice',
+        };
+    }
+}
+
+const CustomerFormSchema = z.object({
+    id: z.string(),
+    name: z.string(),
+    email: z.string(),
+    image: z.any(),
+});
+
+const CreateCustomer = CustomerFormSchema.omit({ id: true });
+
+export async function createCustomer(formData: FormData) {
+    const { name, email, image } = CreateCustomer.parse({
+        name: formData.get('name'),
+        email: formData.get('email'),
+        image: formData.get('image'),
+    });
+
+    const hasImage = image.size > 0;
+    var imageUrl = '/customers/default.png';
+
+    if (hasImage) {
+        const extension = image.name.split('.').pop();
+        const filename = name + '.' + extension;
+        const filePath = `public/customers/${filename}`;
+        imageUrl = `/customers/${filename}`;
+
+        await pump(image.stream(), fs.createWriteStream(filePath));
+    }
+
+    try {
+        await sql`
+            INSERT INTO customers (name, email, image_url)
+            VALUES (${name}, ${email}, ${imageUrl})
+        `;
+    } catch (error) {
+        console.log(error);
+        return {
+            message: 'Database Error: Failed to Create Customer',
+        };
+    }
+
+    revalidatePath('/dashboard/customers');
+    redirect('/dashboard/customers');
+}
+
+
+const UpdateCustomer = CustomerFormSchema.omit({ id: true });
+
+export async function updateCustomer(id: string, formData: FormData) {
+    const { name, email, image } = UpdateCustomer.parse({
+        name: formData.get('name'),
+        email: formData.get('email'),
+        image: formData.get('image')
+    });
+
+    try {
+        const hasImage = image.size > 0;
+
+        if (hasImage) {
+            // Upload new image
+            const extension = image.name.split('.').pop();
+            const newFilename = name + '.' + extension;
+            const newFilePath = `public/customers/${newFilename}`;
+            const newImageUrl = `/customers/${newFilename}`;
+
+            await pump(image.stream(), fs.createWriteStream(newFilePath));
+
+            // Delete old image file
+            const data = await sql<Customer>`
+            SELECT image_url
+                FROM customers
+                WHERE id = ${id}
+            `;
+
+            const imageUrl = data.rows[0].image_url;
+            const filename = imageUrl.split('/').pop();
+            const filePath = `public/customers/${filename}`;
+            fs.unlinkSync(filePath);
+
+            await sql`
+            UPDATE customers
+                SET name = ${name}, email = ${email}, image_url = ${newImageUrl}
+                WHERE id = ${id}
+            `;
+        } else {
+            await sql`
+            UPDATE customers
+                SET name = ${name}, email = ${email}
+                WHERE id = ${id}
+            `;
+        }
+    } catch (error) {
+        return {
+            message: 'Database Error: Failed to Update Customer',
+        };
+    }
+
+    revalidatePath('/dashboard/customers');
+    redirect('/dashboard/customers');
+}
+
+export async function deleteCustomer(id: string) {
+    try {
+
+        // Delete the image file
+        const data = await sql<Customer>`
+            SELECT image_url
+            FROM customers
+            WHERE id = ${id}
+        `;
+        const imageUrl = data.rows[0].image_url;
+
+        if (imageUrl !== '/customers/default.png') {
+            const filename = imageUrl.split('/').pop();
+            const filePath = `public/customers/${filename}`;
+            fs.unlinkSync(filePath);
+        }
+
+        await sql`DELETE FROM customers WHERE id = ${id}`;
+        revalidatePath('/dashboard/customers');
+        return { message: "Deleted Customer" };
+    } catch(error) {
+        return {
+            message: 'Database Error: Failed to Delete Customer',
         };
     }
 }
