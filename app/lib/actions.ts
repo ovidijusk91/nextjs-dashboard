@@ -223,7 +223,12 @@ export async function deleteCustomer(id: string) {
         }
 
         await sql`DELETE FROM customers WHERE id = ${id}`;
+
+        // Delete all invoices associated with the customer
+        await sql`DELETE FROM invoices WHERE customer_id = ${id}`;
+
         revalidatePath('/dashboard/customers');
+        revalidatePath('/dashboard/invoices');
         return { message: "Deleted Customer" };
     } catch(error) {
         return {
