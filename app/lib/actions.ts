@@ -12,6 +12,7 @@ import { promisify } from 'util';
 const pump = promisify(pipeline);
 import { Customer } from './definitions';
 import { slugify } from './utils';
+import { put, del } from "@vercel/blob";
 
 export async function authenticate(
     prevState: string | undefined,
@@ -123,16 +124,18 @@ export async function createCustomer(formData: FormData) {
     });
 
     const hasImage = typeof image === 'object' && image.size > 0;
-    var imageUrl = '/customers/default.png';
+    let imageUrl = '/customers/default.png';
 
     try {
         if (hasImage) {
             const extension = image.name.split('.').pop();
             const filename = slugify(name) + '.' + extension;
             const filePath = `public/customers/${filename}`;
-            imageUrl = `/customers/${filename}`;
-
-            await pump(image.stream(), fs.createWriteStream(filePath));
+            const imageFile = formData.get('image') as File;
+            const blob = await put(filePath, imageFile, {
+                access: 'public',
+            });
+            imageUrl = blob.url;
         }
 
         await sql`
@@ -168,9 +171,11 @@ export async function updateCustomer(id: string, formData: FormData) {
             const extension = image.name.split('.').pop();
             const newFilename = slugify(name) + '.' + extension;
             const newFilePath = `public/customers/${newFilename}`;
-            const newImageUrl = `/customers/${newFilename}`;
-
-            await pump(image.stream(), fs.createWriteStream(newFilePath));
+            const imageFile = formData.get('image') as File;
+            const blob = await put(newFilePath, imageFile, {
+                access: 'public',
+            });
+            const newImageUrl = blob.url;
 
             // Delete old image file
             const data = await sql<Customer>`
@@ -180,9 +185,10 @@ export async function updateCustomer(id: string, formData: FormData) {
             `;
 
             const imageUrl = data.rows[0].image_url;
-            const filename = imageUrl.split('/').pop();
-            const filePath = `public/customers/${filename}`;
-            fs.unlinkSync(filePath);
+
+            if (imageUrl !== '/customers/default.png') {
+                await del(imageUrl);
+            }
 
             await sql`
             UPDATE customers
@@ -218,12 +224,14 @@ export async function deleteCustomer(id: string) {
         const imageUrl = data.rows[0].image_url;
 
         if (imageUrl !== '/customers/default.png') {
-            const filePath = `public${imageUrl}`;
-            if (fs.existsSync(filePath)) {
-                fs.unlinkSync(filePath);
-            }
+            await del(imageUrl);
         }
 
+    } catch(error) {
+        console.log(error);
+    }
+
+    try {
         await sql`DELETE FROM customers WHERE id = ${id}`;
 
         // Delete all invoices associated with the customer
